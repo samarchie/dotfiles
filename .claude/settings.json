@@ -1,0 +1,26 @@
+{
+  "extraKnownMarketplaces": {
+    "superpowers-dev": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/obra/superpowers.git"
+      }
+    }
+  },
+  "theme": "dark",
+  "enabledPlugins": {
+    "superpowers@superpowers-dev": true
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.prompt' | grep -qiE '(write|draft|create|generate).*(pr|pull request|PR) (description|summary|body)|PR description|pull request description' && echo '{\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"IMPORTANT: The user has a skill for writing PR descriptions. You MUST invoke the Skill tool with skill=\\\"writing-pr-descriptions\\\" BEFORE doing anything else, including asking clarifying questions.\"}}' || true"
+          }
+        ]
+      }
+    ]
+  }
+}
