@@ -9,7 +9,9 @@ description: Use when drafting or writing a pull request description, PR summary
 
 Follow a flexible section palette: pick the sections the PR needs, skip the rest. Output as a markdown code block so the user can copy it directly into GitHub.
 
-**Required sub-skill:** Apply `humanizer` to the draft before presenting it. Write in NZ English (organise, behaviour, colour, analyse).
+**Required sub-skill:** Apply `humanizer` to the draft internally, then present only the final humanized result as a markdown code block. Do not show the intermediate draft or the humanizer audit steps to the user.
+
+Write in NZ English (organise, behaviour, colour, analyse).
 
 ---
 
@@ -19,7 +21,7 @@ Use `###` headings for all sections. Never use bold text as a section heading.
 
 ### Summary (always include)
 
-2-4 sentences or short bullets. What changed at a high level, focused on the user-visible or system-visible outcome.
+2-4 sentences or short bullets. What changed at a high level, focused on the user-visible or system-visible outcome. Write in plain, direct English — no jargon, no technical terms unless essential. A non-technical reader should understand the gist.
 
 ### Problem / Why / Problem & motivation (always include)
 
@@ -74,6 +76,7 @@ Links to Basecamp cards, Slack threads, related PRs. No descriptions needed.
 - Numbers over vague claims: "61% reduction", not "significantly smaller".
 - State what was not tested and why. Reviewers trust this over silence.
 - Scale length to the change: 150-250 words for a focused bugfix, 500-700 words for a large refactor.
+- No em dashes (—) anywhere in the description. Use a comma, a period, or rewrite as two sentences.
 
 ---
 
