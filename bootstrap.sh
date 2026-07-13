@@ -9,6 +9,7 @@ REPO_DIR="${1:-t-rex}"
 LOG_FILE="${TMPDIR:-/tmp}/bootstrap-$(date +%Y%m%d-%H%M%S).log"
 
 log()  { printf '[%(%H:%M:%S)T] %s\n' -1 "$*" | tee -a "$LOG_FILE"; }
+log "Log file saving to $LOG_FILE"
 die()  { log "ERROR: $*"; exit 1; }
 trap 'die "failed at line $LINENO"' ERR
 
@@ -95,6 +96,16 @@ else
   ssh-keygen -t ed25519 -C "sam.archie@urbanintelligence.co.nz" -f "$HOME/.ssh/id_ed25519" -N ""
   log "add this public key to GitHub: https://github.com/settings/keys"
   cat "$HOME/.ssh/id_ed25519.pub"
+fi
+
+log "installing terraform"
+if command -v terraform >/dev/null 2>&1; then
+  log "skip terraform install, already present"
+else
+  wget -qO- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+  sudo apt-get update -y
+  sudo apt-get install -y terraform
 fi
 
 log "installing docker"
