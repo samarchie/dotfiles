@@ -44,28 +44,37 @@ if [ -d "$HOME/.oh-my-zsh" ]; then
   log "skip oh-my-zsh install, already present"
 else
   RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+
+  # chsh isn't available to run as my usual user
+  cat > ~/.bash_profile << 'EOF'
+if [ -x "$(command -v zsh)" ] && [ -z "$ZSH_VERSION" ]; then
+    export SHELL=$(command -v zsh)
+    exec $(command -v zsh) -l
 fi
+EOF
+  
+  log "configuring .zshrc"
+  sed -i 's/^ZSH_THEME=.*/ZSH_THEME="agnoster"/' ~/.zshrc
+  grep -q '^DEFAULT_USER=' ~/.zshrc || echo 'DEFAULT_USER="$(whoami)"' >> ~/.zshrc
 
-log "configuring .zshrc"
-sed -i 's/^ZSH_THEME=.*/ZSH_THEME="agnoster"/' ~/.zshrc
-grep -q '^DEFAULT_USER=' ~/.zshrc || echo 'DEFAULT_USER="$(whoami)"' >> ~/.zshrc
+  log "installing zsh plugins"
+  ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+  clone_plugin() {
+    local url=$1 dest=$2
+    if [ -d "$dest" ]; then
+      log "skip clone, already present: $dest"
+    else
+      git clone --depth 1 "$url" "$dest"
+    fi
+  }
+  clone_plugin https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+  clone_plugin https://github.com/zsh-users/zsh-syntax-highlighting "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+  clone_plugin https://github.com/zsh-users/zsh-history-substring-search "$ZSH_CUSTOM/plugins/zsh-history-substring-search"
+  clone_plugin https://github.com/MichaelAquilina/zsh-you-should-use "$ZSH_CUSTOM/plugins/you-should-use"
 
-ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
-log "installing zsh plugins"
-clone_plugin() {
-  local url=$1 dest=$2
-  if [ -d "$dest" ]; then
-    log "skip clone, already present: $dest"
-  else
-    git clone --depth 1 "$url" "$dest"
-  fi
-}
-clone_plugin https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
-clone_plugin https://github.com/zsh-users/zsh-syntax-highlighting "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
-clone_plugin https://github.com/zsh-users/zsh-history-substring-search "$ZSH_CUSTOM/plugins/zsh-history-substring-search"
-clone_plugin https://github.com/MichaelAquilina/zsh-you-should-use "$ZSH_CUSTOM/plugins/you-should-use"
+  sed -i 's/^plugins=.*/plugins=(git aws docker docker-compose zsh-autosuggestions zsh-syntax-highlighting zsh-history-substring-search you-should-use)/' ~/.zshrc
 
-sed -i 's/^plugins=.*/plugins=(git aws docker docker-compose zsh-autosuggestions zsh-syntax-highlighting zsh-history-substring-search you-should-use)/' ~/.zshrc
+fi
 
 log "installing uv"
 if command -v uv >/dev/null 2>&1; then
@@ -87,16 +96,6 @@ else
 fi
 git config --global init.defaultBranch main
 git config --global pull.rebase false
-
-log "generating ssh key"
-if [ -f "$HOME/.ssh/id_ed25519" ]; then
-  log "skip ssh keygen, already present"
-else
-  mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
-  ssh-keygen -t ed25519 -C "sam.archie@urbanintelligence.co.nz" -f "$HOME/.ssh/id_ed25519" -N ""
-  log "add this public key to GitHub: https://github.com/settings/keys"
-  cat "$HOME/.ssh/id_ed25519.pub"
-fi
 
 log "installing terraform"
 if command -v terraform >/dev/null 2>&1; then
@@ -129,13 +128,38 @@ add_marketplace() { claude plugin marketplace add "$1" 2>&1 | tee -a "$LOG_FILE"
 add_marketplace https://github.com/obra/Superpowers.git
 add_marketplace https://github.com/DietrichGebert/ponytail.git
 add_marketplace https://github.com/juliusbrussee/caveman.git
-add_marketplace https://github.com/blader/humanizer.git
+add_marketplace https://github.com/ayghri/i-have-adhd
 
 log "installing claude plugins"
 install_plugin() { claude plugin install "$1" 2>&1 | tee -a "$LOG_FILE" || true; }
 install_plugin superpowers@superpowers-dev
 install_plugin ponytail@ponytail
 install_plugin caveman@caveman
-install_plugin humanizer@humanizer
+install_plugin i-have-adhd@i-have-adhd
+
+
+log "installing github cli"
+if command -v gh >/dev/null 2>&1; then
+  log "skip github cli install, already present"
+else
+  (type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y)) \
+    && sudo mkdir -p -m 755 /etc/apt/keyrings \
+    && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+    && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && sudo mkdir -p -m 755 /etc/apt/sources.list.d \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && sudo apt update \
+    && sudo apt install gh -y
+  gh auth login
+fi 
+
+log "installing aws cli"
+if command -v claude >/dev/null 2>&1; then
+  log "skip aws cli install, already present"
+else
+  curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash
+  aws configure
+fi
 
 log "bootstrap complete. Log: $LOG_FILE"
