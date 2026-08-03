@@ -47,7 +47,7 @@ else
 
   # chsh isn't available to run as my usual user
   cat > ~/.bash_profile << 'EOF'
-if [ -x "$(command -v zsh)" ] && [ -z "$ZSH_VERSION" ]; then
+if [ -x "$(command -v zsh)" ] && [ -z "$ZSH_VERSION" ] && [[ $- == *i* ]]; then
     export SHELL=$(command -v zsh)
     exec $(command -v zsh) -l
 fi
