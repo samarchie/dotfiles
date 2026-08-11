@@ -73,6 +73,7 @@ EOF
   clone_plugin https://github.com/MichaelAquilina/zsh-you-should-use "$ZSH_CUSTOM/plugins/you-should-use"
 
   sed -i 's/^plugins=.*/plugins=(git aws docker docker-compose zsh-autosuggestions zsh-syntax-highlighting zsh-history-substring-search you-should-use)/' ~/.zshrc
+  echo "export GIT_AUTHOR_NAME='Sam Archie'" >> ~/.zshrc
 
 fi
 
