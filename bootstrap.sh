@@ -76,7 +76,7 @@ declare -A CLAUDE_PLUGINS=(
 ITEMS=(wsl_interop nvm node zsh ohmyzsh zsh_plugins zsh_aliases uv cli_tools git_config global_gitignore terraform docker docker_running postgresql
        claude statusline claude_plugins claude_guardrails basecamp_mcp basecamp_auth
        gh gh_auth ssh_key git_signing aws aws_auth ssm_plugin herdr rex_hosts pre_commit
-       risq aws_profile ssl_certs risq_dev_setup pre_commit_hooks
+       risq env_files aws_profile ssl_certs risq_dev_setup pre_commit_hooks
        terraform_aws)  # these last: they need docker, ssh, terraform and aws cli + auth
 declare -A LABEL=(
   [nvm]="nvm"
@@ -115,6 +115,7 @@ declare -A LABEL=(
   [pre_commit_hooks]="pre-commit hooks installed in repos"
   [terraform_aws]="terraform-aws cloned and initialised ($TF_DIR)"
   [risq]="risq cloned, up to date and installed ($RISQ_DIR)"
+  [env_files]="repo env files (catalogue cms explorer-api risq risk-explorer)"
   [risq_dev_setup]="risq dev setup (repos synced into $CODE_HOME)"
 )
 
@@ -428,6 +429,29 @@ install_risq() {
   has risq || (cd "$RISQ_DIR" && uv tool install -e .)
 }
 
+# repo -> env file it needs; risq first because any risq command silently creates its own from the example
+ENV_REPOS=(risq catalogue cms explorer-api risk-explorer)
+declare -A ENV_FILES=([risq]=.env [catalogue]=.env [cms]=.env [explorer-api]=.env [risk-explorer]=.env.local)
+check_env_files() {
+  local repo
+  for repo in "${ENV_REPOS[@]}"; do [ -s "$CODE_HOME/$repo/${ENV_FILES[$repo]}" ] || return 1; done
+}
+install_env_files() {
+  local repo file synced=0
+  for repo in "${ENV_REPOS[@]}"; do
+    file="$CODE_HOME/$repo/${ENV_FILES[$repo]}"
+    [ -s "$file" ] && continue
+    if [ ! -d "$CODE_HOME/$repo" ] && [ "$synced" = 0 ]; then
+      (cd "$RISQ_DIR" && risq dev sync)
+      synced=1
+    fi
+    if [ -f "$CODE_HOME/$repo/.env.example" ]; then cp "$CODE_HOME/$repo/.env.example" "$file"; else touch "$file"; fi
+    log "fill in $file, then save and exit the editor"
+    "${EDITOR:-nano}" "$file"
+  done
+  check_env_files
+}
+
 # shortcut: only checks the repos were synced; `risq dev setup` exits 0 even when build or seeding fails, so read its output
 check_risq_dev_setup() {
   local repo
@@ -624,7 +648,6 @@ main() {
     PICKED=()
     log "re-checking machine setup"
     run_checks
-    read -rsp "Press enter to return to the menu" _
     menu_screen_on
   done
 

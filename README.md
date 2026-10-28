@@ -41,7 +41,9 @@ A log of each run is written to `$TMPDIR/bootstrap-<timestamp>.log`.
 - **Hosts:** `rex.local`, `api.rex.local`, `cms.rex.local`, `catalogue.rex.local` → `127.0.0.1`
   (on WSL also the Windows hosts file, via an admin prompt)
 - **Dev environment (last, needs the above):** clones or fast-forwards risq into `<code-home>/risq`, installs it with
-  `uv tool install -e .`, creates the `analyst-user-role` AWS profile (`risq ec2 ssh-config`), generates and trusts
+  `uv tool install -e .`, creates any missing env files (`.env` in risq, catalogue, cms and explorer-api,
+  `.env.local` in risk-explorer) by copying `.env.example` (empty for explorer-api) and opening each in `$EDITOR`
+  (default `nano`) for you to fill in, creates the `analyst-user-role` AWS profile (`risq ec2 ssh-config`), generates and trusts
   the `rex.local` / `api.rex.local` SSL certs (on WSL, imported into the Windows user Root store), runs
   `risq dev setup` (syncs explorer-api, risk-explorer, cms, t-rex and catalogue, builds images, seeds the local db),
   then `pre-commit install` in every repo with a `.pre-commit-config.yaml`, and finally clones terraform-aws and runs
