@@ -118,10 +118,11 @@ else
 fi
 
 log "install postgresql"
-if command -v psql >/dev/null 2&1; then
+if command -v psql >/dev/null 2>&1; then
   log "skip postgresql install, already present"
 else
   sudo apt install postgresql postgresql-contrib -y
+fi
 
 log "installing claude code cli"
 if command -v claude >/dev/null 2>&1; then
@@ -147,6 +148,17 @@ install_plugin ponytail@ponytail
 install_plugin caveman@caveman
 install_plugin i-have-adhd@i-have-adhd
 
+log "adding basecamp mcp to claude"
+if claude mcp get basecamp >/dev/null 2>&1; then
+  log "skip basecamp mcp add, already present"
+else
+  claude mcp add --scope user --transport http basecamp https://mcp.basecamp.com/mcp
+fi
+if claude mcp get basecamp 2>&1 | grep -q "Connected"; then
+  log "skip basecamp mcp auth, already authenticated"
+else
+  claude mcp login basecamp
+fi
 
 log "installing github cli"
 if command -v gh >/dev/null 2>&1; then
@@ -173,9 +185,10 @@ else
 fi
 
 log "installing herdr"
-if command -v herdr >/dev/null 2&1; then
+if command -v herdr >/dev/null 2>&1; then
   log "skip herdr install, already present"
 else
   curl -fsSL https://herdr.dev/install.sh | sh
+fi
 
 log "bootstrap complete. Log: $LOG_FILE"
