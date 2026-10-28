@@ -17,6 +17,13 @@ These apply in every repo. Repo CLAUDE.md files may be stricter, never looser.
 - Only use local Docker databases, and only via `docker exec <container> ...` or `docker compose exec <service> ...`.
 - Never run `risq rds forward`, `risq rds migrate` against anything but `local`, or `aws ssm start-session`.
 
+## Slack
+
+- Reading Slack (channels, threads, search, profiles, canvases, lists, reactions) is fine.
+- Anything that changes Slack — sending or scheduling a message, replying in a thread, reacting, creating or
+  editing canvases, lists or conversations, uploading files — needs the user's confirmation first.
+  Show the exact message or change before asking.
+
 ## Infrastructure
 
 - Never run the `aws` CLI, `terraform plan/apply/destroy/import/state`, or `risq aws admin`.

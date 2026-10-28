@@ -2,7 +2,8 @@
 """Merge dotfiles claude/settings.json into ~/.claude/settings.json without dropping existing keys.
 
 Usage: merge_settings.py <source> <target> [--check]
-Permission lists and hooks are unioned; other permission keys (e.g. defaultMode) take the source value.
+Permission lists are unioned; other permission keys (e.g. defaultMode) take the source value.
+Hook entries are added, or replace an existing entry that runs the same hook commands.
   --check  exit 0 if target already matches the merge result, else 1
 """
 import json
@@ -30,10 +31,16 @@ def merge(source, target):
             permissions[key] = value
     merged["permissions"] = permissions
 
+    # an entry running the same hook commands is replaced, so a changed matcher doesn't add a duplicate hook
     hooks = dict(merged.get("hooks", {}))
     for event, entries in source.get("hooks", {}).items():
         existing = list(hooks.get(event, []))
-        existing += [entry for entry in entries if entry not in existing]
+        for entry in entries:
+            same = [i for i, old in enumerate(existing) if old.get("hooks") == entry.get("hooks")]
+            if same:
+                existing[same[0]] = entry
+            else:
+                existing.append(entry)
         hooks[event] = existing
     merged["hooks"] = hooks
     return merged

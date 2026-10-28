@@ -18,6 +18,8 @@ CODE_HOME="$(realpath -m "${1:-${CODE_HOME:-$HOME/ui}}")"
 export CODE_HOME
 RISQ_DIR="$CODE_HOME/risq"
 TF_DIR="$CODE_HOME/terraform-aws/terraform"
+EXTRA_REPOS=(terraform-aws db-ci)
+NODE_REPOS=(cms db-ci explorer-api risk-explorer terraform-aws)
 RISQ_REPOS=(risq explorer-api risk-explorer cms t-rex catalogue)
 
 LOG_FILE="${TMPDIR:-/tmp}/bootstrap-$(date +%Y%m%d-%H%M%S).log"
@@ -64,20 +66,23 @@ declare -A ZSH_PLUGINS=(
   [you-should-use]=https://github.com/MichaelAquilina/zsh-you-should-use
 )
 
-# plugin -> marketplace repo
+# plugin -> marketplace repo (empty = claude-plugins-official, which claude already knows)
 declare -A CLAUDE_PLUGINS=(
-  [superpowers@superpowers-dev]=https://github.com/obra/Superpowers.git
+  [superpowers@claude-plugins-official]=
   [ponytail@ponytail]=https://github.com/DietrichGebert/ponytail.git
-  [caveman@caveman]=https://github.com/juliusbrussee/caveman.git
   [i-have-adhd@i-have-adhd]=https://github.com/ayghri/i-have-adhd
+  [mattpocock-skills@claude-plugins-official]=
+  [slack@claude-plugins-official]=
 )
+# i-have-adhd's SessionStart hook loads its rules every session when this file exists
+ADHD_ALWAYS_ON="$HOME/.claude/.i-have-adhd-always"
 
 # Each item has check_<id> (exit 0 = done) and install_<id>. Order matters: later items may need earlier ones.
 ITEMS=(wsl_interop nvm node zsh ohmyzsh zsh_plugins zsh_aliases uv cli_tools git_config global_gitignore terraform docker docker_running postgresql
-       claude statusline claude_plugins claude_guardrails basecamp_mcp basecamp_auth
+       claude statusline claude_plugins claude_guardrails basecamp_mcp basecamp_auth slack_auth
        gh gh_auth ssh_key git_signing aws aws_auth ssm_plugin herdr rex_hosts pre_commit
        risq env_files aws_profile ssl_certs risq_dev_setup pre_commit_hooks
-       terraform_aws)  # these last: they need docker, ssh, terraform and aws cli + auth
+       extra_repos terraform_aws node_deps playwright)  # these last: they need docker, ssh, terraform and aws cli + auth
 declare -A LABEL=(
   [nvm]="nvm"
   [node]="node LTS (via nvm)"
@@ -96,10 +101,11 @@ declare -A LABEL=(
   [postgresql]="postgresql"
   [claude]="claude code cli"
   [statusline]="claude status line"
-  [claude_plugins]="claude plugins (${!CLAUDE_PLUGINS[*]})"
+  [claude_plugins]="claude plugins (superpowers ponytail i-have-adhd always-on mattpocock-skills slack)"
   [claude_guardrails]="claude guardrails (global CLAUDE.md, guard hook, deny rules)"
   [basecamp_mcp]="basecamp mcp added to claude"
   [basecamp_auth]="basecamp mcp authenticated"
+  [slack_auth]="slack mcp authenticated (from the slack plugin)"
   [gh]="github cli"
   [gh_auth]="github cli authenticated"
   [ssh_key]="github ssh key (git over ssh)"
@@ -113,7 +119,10 @@ declare -A LABEL=(
   [aws_profile]="aws profile analyst-user-role (risq ec2 ssh-config)"
   [ssl_certs]="rex.local ssl certs generated and trusted"
   [pre_commit_hooks]="pre-commit hooks installed in repos"
-  [terraform_aws]="terraform-aws cloned and initialised ($TF_DIR)"
+  [extra_repos]="extra repos cloned (${EXTRA_REPOS[*]})"
+  [terraform_aws]="terraform-aws initialised ($TF_DIR)"
+  [node_deps]="node deps + husky hooks (${NODE_REPOS[*]})"
+  [playwright]="playwright chromium for risk-explorer e2e"
   [risq]="risq cloned, up to date and installed ($RISQ_DIR)"
   [env_files]="repo env files (catalogue cms explorer-api risq risk-explorer)"
   [risq_dev_setup]="risq dev setup (repos synced into $CODE_HOME)"
@@ -272,18 +281,20 @@ install_claude(){ curl -fsSL https://claude.ai/install.sh | bash; }
 check_statusline()   { grep -qs '"statusLine"' "$HOME/.claude/settings.json"; }
 install_statusline() { curl -fsSL https://statusline-community.zoniixyt.workers.dev/i/wqJr9DNjzw.sh | bash; }
 
+plugin_installed() { grep -qs "\"$1\"" "$HOME/.claude/plugins/installed_plugins.json"; }
 check_claude_plugins() {
   local p
-  for p in "${!CLAUDE_PLUGINS[@]}"; do
-    grep -qs "\"$p\"" "$HOME/.claude/plugins/installed_plugins.json" || return 1
-  done
+  for p in "${!CLAUDE_PLUGINS[@]}"; do plugin_installed "$p" || return 1; done
+  [ -f "$ADHD_ALWAYS_ON" ]
 }
 install_claude_plugins() {
   local p
   for p in "${!CLAUDE_PLUGINS[@]}"; do
-    claude plugin marketplace add "${CLAUDE_PLUGINS[$p]}" || true  # errors if already added
+    plugin_installed "$p" && continue
+    [ -z "${CLAUDE_PLUGINS[$p]}" ] || claude plugin marketplace add "${CLAUDE_PLUGINS[$p]}" || true  # errors if already added
     claude plugin install "$p"
   done
+  touch "$ADHD_ALWAYS_ON"
 }
 
 # copied, not symlinked, so Claude editing dotfiles can't change the live guard; edits need a reinstall
@@ -320,6 +331,10 @@ install_basecamp_mcp() { claude mcp add --scope user --transport http basecamp h
 
 check_basecamp_auth()   { has claude && [[ $(claude mcp get basecamp 2>&1) == *Connected* ]]; }
 install_basecamp_auth() { claude mcp login basecamp; }
+
+# the slack plugin registers its MCP server under this name
+check_slack_auth()   { has claude && [[ $(claude mcp get plugin:slack:slack 2>&1) == *Connected* ]]; }
+install_slack_auth() { claude mcp login plugin:slack:slack; }
 
 check_gh()      { has gh; }
 install_gh() {
@@ -522,11 +537,38 @@ install_pre_commit_hooks() {
 }
 
 # init reads the S3 backend, so it needs the aws cli logged in
-check_terraform_aws() { [ -d "$TF_DIR/.terraform/providers" ]; }
-install_terraform_aws() {
-  [ -d "$CODE_HOME/terraform-aws/.git" ] || git clone git@github.com:uintel/terraform-aws.git "$CODE_HOME/terraform-aws"
-  terraform -chdir="$TF_DIR" init
+check_terraform_aws()   { [ -d "$TF_DIR/.terraform/providers" ]; }
+install_terraform_aws() { terraform -chdir="$TF_DIR" init; }
+
+# repos risq dev sync doesn't clone
+check_extra_repos() {
+  local repo
+  for repo in "${EXTRA_REPOS[@]}"; do [ -d "$CODE_HOME/$repo/.git" ] || return 1; done
 }
+install_extra_repos() {
+  local repo
+  for repo in "${EXTRA_REPOS[@]}"; do
+    [ -d "$CODE_HOME/$repo/.git" ] || git clone "git@github.com:uintel/$repo.git" "$CODE_HOME/$repo"
+  done
+}
+
+# host node_modules for tests, lint and editors; dev containers keep theirs in named volumes.
+# npm's prepare script also installs the husky hooks in risk-explorer and terraform-aws
+check_node_deps() {
+  local repo
+  for repo in "${NODE_REPOS[@]}"; do [ -d "$CODE_HOME/$repo/node_modules" ] || return 1; done
+}
+install_node_deps() {
+  local repo
+  load_nvm
+  for repo in "${NODE_REPOS[@]}"; do
+    [ -d "$CODE_HOME/$repo/node_modules" ] && continue
+    if [ -f "$CODE_HOME/$repo/package-lock.json" ]; then (cd "$CODE_HOME/$repo" && npm ci); else (cd "$CODE_HOME/$repo" && npm install); fi
+  done
+}
+
+check_playwright()   { compgen -G "$HOME/.cache/ms-playwright/chromium-*" >/dev/null; }
+install_playwright() { load_nvm; (cd "$CODE_HOME/risk-explorer" && npx playwright install --with-deps chromium); }
 
 # menu and status list are alphabetical by label; installs still follow ITEMS (dependency) order
 mapfile -t DISPLAY < <(for id in "${ITEMS[@]}"; do printf '%s\t%s\n' "${LABEL[$id]}" "$id"; done | sort -f | cut -f2)

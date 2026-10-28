@@ -36,8 +36,9 @@ A log of each run is written to `$TMPDIR/bootstrap-<timestamp>.log`.
 - **Docker:** daemon running and usable without sudo (on WSL, enables systemd in `/etc/wsl.conf`; restart WSL after)
 - **Git:** global user, `init.defaultBranch main`, `pull.rebase false`, global gitignore for env files and bytecode,
   ed25519 SSH key added to GitHub, `gh` using SSH, commits signed with the SSH key
-- **Claude Code:** cli, status line, plugins (superpowers, ponytail, caveman, i-have-adhd), Basecamp MCP, guardrails
-- **Auth:** `gh auth login`, `aws configure`, `claude mcp login basecamp`
+- **Claude Code:** cli, status line, plugins (superpowers, ponytail, i-have-adhd set to always on,
+  mattpocock-skills, slack), Basecamp MCP, guardrails
+- **Auth:** `gh auth login`, `aws configure`, `claude mcp login basecamp`, `claude mcp login plugin:slack:slack`
 - **Hosts:** `rex.local`, `api.rex.local`, `cms.rex.local`, `catalogue.rex.local` → `127.0.0.1`
   (on WSL also the Windows hosts file, via an admin prompt)
 - **Dev environment (last, needs the above):** clones or fast-forwards risq into `<code-home>/risq`, installs it with
@@ -46,8 +47,10 @@ A log of each run is written to `$TMPDIR/bootstrap-<timestamp>.log`.
   (default `nano`) for you to fill in, creates the `analyst-user-role` AWS profile (`risq ec2 ssh-config`), generates and trusts
   the `rex.local` / `api.rex.local` SSL certs (on WSL, imported into the Windows user Root store), runs
   `risq dev setup` (syncs explorer-api, risk-explorer, cms, t-rex and catalogue, builds images, seeds the local db),
-  then `pre-commit install` in every repo with a `.pre-commit-config.yaml`, and finally clones terraform-aws and runs
-  `terraform init` in its `terraform/` dir (needs aws cli auth for the S3 backend).
+  then `pre-commit install` in every repo with a `.pre-commit-config.yaml`. Finally it clones terraform-aws and db-ci,
+  runs `terraform init` in `terraform-aws/terraform` (needs aws cli auth for the S3 backend), runs `npm ci` in cms,
+  db-ci, explorer-api, risk-explorer and terraform-aws (also installs their husky hooks), and installs Playwright's
+  chromium for risk-explorer's e2e tests.
 
 Every interactive run first runs `uv tool upgrade --all` and `claude update`.
 
@@ -57,7 +60,7 @@ Files in `claude/`, installed globally so they apply in every repo:
 
 | File                  | Installed to                     | Purpose                                                      |
 | --------------------- | -------------------------------- | ------------------------------------------------------------ |
-| `CLAUDE.md`           | `~/.claude/CLAUDE.md`            | Global rules: secrets, databases, infrastructure             |
+| `CLAUDE.md`           | `~/.claude/CLAUDE.md`            | Global rules: secrets, databases, Slack, infrastructure      |
 | `hooks/guard.py`      | `~/.claude/hooks/guard.py`       | `PreToolUse` hook that blocks rule-breaking tool calls       |
 | `settings.json`       | merged into `~/.claude/settings.json` | `acceptEdits` default mode, deny rules, hook registration |
 | `merge_settings.py`   | —                                | Merges `settings.json` without dropping existing config      |
@@ -71,6 +74,10 @@ The guard blocks:
 - the `aws` CLI
 - `risq rds forward`, `risq rds migrate` against anything but `local`, `risq aws admin`
 - `terraform plan/apply/destroy/import/state/force-unlock`
+
+For Slack MCP tools (the slack plugin or the claude.ai connector), reads (`read_*`, `search_*`, `list_*`,
+`get_reactions`) run without a prompt, and every other Slack tool (send, schedule, react, canvases, lists,
+conversations, file uploads) always asks you to confirm first.
 
 Files are copied, not symlinked, so Claude editing this repo can't change the live guard.
 After changing them, rerun bootstrap: the guardrails item shows as missing until the installed copies match.

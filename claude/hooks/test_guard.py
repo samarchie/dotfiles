@@ -5,7 +5,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from guard import check_bash, check_paths  # noqa: E402
+from guard import check_bash, check_paths, slack_decision  # noqa: E402
 
 BLOCKED = [
     "cat .env",
@@ -39,6 +39,14 @@ BLOCKED = [
     "cd terraform && terraform apply",
     "terraform -chdir=terraform plan",
     "terraform state rm aws_s3_bucket.x",
+    "bash -c 'terraform apply'",
+    "sh -c \"risq rds forward prod\"",
+    "eval terraform destroy",
+    "timeout 60 terraform apply",
+    "sudo -E terraform destroy",
+    "echo x | xargs terraform state rm",
+    "bash -lc 'aws s3 ls'",
+    "ssh bastion psql -h prod",
 ]
 
 ALLOWED = [
@@ -60,6 +68,12 @@ ALLOWED = [
     "terraform validate",
     "git status",
     "uv run --group test pytest -v",
+    "grep -n 'terraform plan/apply/destroy/import/state/force-unlock' README.md",
+    "rg 'risq rds forward' docs/",
+    "grep -rn psql README.md",
+    "echo 'run terraform apply yourself'",
+    "git commit -m 'document terraform apply and psql usage'",
+    "grep -E '^\\.env\\.(example|sample)' files.txt",
 ]
 
 
@@ -79,6 +93,24 @@ def test_paths():
     assert not check_paths({"path": "/repo"})
 
 
+SLACK_READS = ["read_channel", "read_thread", "read_canvas", "read_user_profile", "read_file", "read_list",
+               "search_public", "search_public_and_private", "search_channels", "search_users", "search_emojis",
+               "list_channel_members", "list_user_channels", "get_reactions"]
+SLACK_WRITES = ["send_message", "send_message_draft", "schedule_message", "add_reaction", "create_canvas",
+                "update_canvas", "create_conversation", "create_list", "update_list", "add_list_record",
+                "update_list_record", "get_file_upload_url", "complete_file_upload"]
+
+
+def test_slack():
+    for prefix in ("mcp__plugin_slack_slack__", "mcp__claude_ai_Slack__"):
+        for tool in SLACK_READS:
+            assert slack_decision(prefix + "slack_" + tool)[0] == "allow", tool
+        for tool in SLACK_WRITES:
+            assert slack_decision(prefix + "slack_" + tool)[0] == "ask", tool
+    assert slack_decision("Bash") is None
+    assert slack_decision("mcp__claude_ai_Gmail__search") is None
+
+
 def test_commit_with_staged_env():
     with tempfile.TemporaryDirectory() as repo:
         git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True)  # noqa: E731
@@ -87,12 +119,13 @@ def test_commit_with_staged_env():
         git("add", "app.py")
         assert not check_bash("git commit -m x", repo)
         open(os.path.join(repo, ".env"), "w").close()
-        git("add", ".env")
+        git("add", "-f", ".env")  # -f: the global gitignore ignores env files
         assert check_bash("git commit -m x", repo)
 
 
 if __name__ == "__main__":
     test_commands()
     test_paths()
+    test_slack()
     test_commit_with_staged_env()
     print("guard ok")
