@@ -18,16 +18,11 @@ It checks what is installed, configured and authenticated, lists what is missing
 | i     | install selected                |
 | q     | quit                            |
 
-Status only, no changes (exits 1 if anything is missing):
+
+An optional code home sets where risq and the repos it syncs live (default `$CODE_HOME`, else `~/ui`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/samarchie/dotfiles/main/bootstrap.sh | bash -s -- --check
-```
-
-An optional code home sets where risq and the repos it syncs live (default `$CODE_HOME`, else `~/code`):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/samarchie/dotfiles/main/bootstrap.sh | bash -s -- ~/ui
+curl -fsSL https://raw.githubusercontent.com/samarchie/dotfiles/main/bootstrap.sh | bash -s -- ~/code
 ```
 
 From a local checkout, `./bootstrap.sh [--check] [code-home]` uses the checkout's files instead of cloning.
@@ -35,14 +30,24 @@ A log of each run is written to `$TMPDIR/bootstrap-<timestamp>.log`.
 
 ## What it sets up
 
-- **Shell:** zsh, oh-my-zsh (agnoster theme), zsh plugins, `.bash_profile` hand-off to zsh
-- **Tools:** nvm + node LTS, uv, terraform, docker, postgresql client, github cli, aws cli, herdr
-- **Git:** global user, `init.defaultBranch main`, `pull.rebase false`
+- **Shell:** zsh, oh-my-zsh (agnoster theme), zsh plugins (incl. terraform: `tf`, `tfi`, `tfp`, `tfa`, ...), `tfdev`/`tftest`/`tfprod` workspace aliases, `.bash_profile` hand-off to zsh
+- **Tools:** nvm + node LTS, uv, terraform, docker, postgresql client, github cli, aws cli,
+  AWS Session Manager plugin, herdr, pre-commit, ripgrep, jq, fd, shellcheck, certutil
+- **Docker:** daemon running and usable without sudo (on WSL, enables systemd in `/etc/wsl.conf`; restart WSL after)
+- **Git:** global user, `init.defaultBranch main`, `pull.rebase false`, global gitignore for env files and bytecode,
+  ed25519 SSH key added to GitHub, `gh` using SSH, commits signed with the SSH key
 - **Claude Code:** cli, status line, plugins (superpowers, ponytail, caveman, i-have-adhd), Basecamp MCP, guardrails
 - **Auth:** `gh auth login`, `aws configure`, `claude mcp login basecamp`
+- **Hosts:** `rex.local`, `api.rex.local`, `cms.rex.local`, `catalogue.rex.local` → `127.0.0.1`
+  (on WSL also the Windows hosts file, via an admin prompt)
 - **Dev environment (last, needs the above):** clones or fast-forwards risq into `<code-home>/risq`, installs it with
-  `uv tool install -e .`, then runs `risq dev setup` (syncs explorer-api, risk-explorer, cms, t-rex and catalogue,
-  builds images, seeds the local db). The clone uses SSH, so pick SSH during `gh auth login`.
+  `uv tool install -e .`, creates the `analyst-user-role` AWS profile (`risq ec2 ssh-config`), generates and trusts
+  the `rex.local` / `api.rex.local` SSL certs (on WSL, imported into the Windows user Root store), runs
+  `risq dev setup` (syncs explorer-api, risk-explorer, cms, t-rex and catalogue, builds images, seeds the local db),
+  then `pre-commit install` in every repo with a `.pre-commit-config.yaml`, and finally clones terraform-aws and runs
+  `terraform init` in its `terraform/` dir (needs aws cli auth for the S3 backend).
+
+Every interactive run first runs `uv tool upgrade --all` and `claude update`.
 
 ## Claude guardrails
 

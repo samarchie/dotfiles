@@ -17,6 +17,7 @@ if [ "${1:-}" = "--check" ]; then CHECK_ONLY=1; shift; fi
 CODE_HOME="$(realpath -m "${1:-${CODE_HOME:-$HOME/ui}}")"
 export CODE_HOME
 RISQ_DIR="$CODE_HOME/risq"
+TF_DIR="$CODE_HOME/terraform-aws/terraform"
 RISQ_REPOS=(risq explorer-api risk-explorer cms t-rex catalogue)
 
 LOG_FILE="${TMPDIR:-/tmp}/bootstrap-$(date +%Y%m%d-%H%M%S).log"
@@ -24,6 +25,12 @@ LOG_FILE="${TMPDIR:-/tmp}/bootstrap-$(date +%Y%m%d-%H%M%S).log"
 log()  { printf '[%(%H:%M:%S)T] %s\n' -1 "$*" | tee -a "$LOG_FILE"; }
 die()  { log "ERROR: $*"; exit 1; }
 has()  { command -v "$1" >/dev/null 2>&1; }
+is_wsl() { grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; }
+
+REX_HOSTS=(rex.local api.rex.local cms.rex.local catalogue.rex.local)
+WIN_HOSTS=/mnt/c/Windows/System32/drivers/etc/hosts
+SSH_KEY="$HOME/.ssh/id_ed25519"
+GLOBAL_GITIGNORE=(".env" ".env.*" "!.env.example" "!.env.sample" "!.env.template" "__pycache__/" "*.py[cod]" ".DS_Store")
 
 has git  || die "required command not found: git"
 has curl || die "required command not found: curl"
@@ -45,7 +52,10 @@ load_nvm() { [ -s "$NVM_DIR/nvm.sh" ] || return 1; set +u; . "$NVM_DIR/nvm.sh"; 
 DOTFILES_REPO=https://github.com/samarchie/dotfiles.git
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
 DOTFILES_TMP=""
-cleanup() { [ -t 1 ] && tput cnorm; [ -n "$DOTFILES_TMP" ] && rm -rf "$DOTFILES_TMP"; }
+# menu draws on the alternate screen so it never scrolls the terminal; installs run on the normal screen
+menu_screen_on()  { printf '\e[?1049h\e[?25l'; }
+menu_screen_off() { printf '\e[?25h\e[?1049l'; }
+cleanup() { [ -t 1 ] && menu_screen_off; [ -n "$DOTFILES_TMP" ] && rm -rf "$DOTFILES_TMP"; }
 ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
 declare -A ZSH_PLUGINS=(
   [zsh-autosuggestions]=https://github.com/zsh-users/zsh-autosuggestions
@@ -63,19 +73,26 @@ declare -A CLAUDE_PLUGINS=(
 )
 
 # Each item has check_<id> (exit 0 = done) and install_<id>. Order matters: later items may need earlier ones.
-ITEMS=(nvm node zsh ohmyzsh zsh_plugins uv git_config terraform docker postgresql
-       claude statusline claude_plugins claude_guardrails basecamp_mcp basecamp_auth gh gh_auth aws aws_auth herdr
-       risq risq_dev_setup)  # risq last: dev setup needs docker, gh/ssh and aws auth
+ITEMS=(wsl_interop nvm node zsh ohmyzsh zsh_plugins zsh_aliases uv cli_tools git_config global_gitignore terraform docker docker_running postgresql
+       claude statusline claude_plugins claude_guardrails basecamp_mcp basecamp_auth
+       gh gh_auth ssh_key git_signing aws aws_auth ssm_plugin herdr rex_hosts pre_commit
+       risq aws_profile ssl_certs risq_dev_setup pre_commit_hooks
+       terraform_aws)  # these last: they need docker, ssh, terraform and aws cli + auth
 declare -A LABEL=(
   [nvm]="nvm"
   [node]="node LTS (via nvm)"
   [zsh]="zsh"
   [ohmyzsh]="oh-my-zsh + .zshrc config"
   [zsh_plugins]="zsh plugins"
+  [zsh_aliases]="terraform workspace aliases (tfdev tftest tfprod)"
   [uv]="uv"
+  [wsl_interop]="wsl can run windows programs (browser, powershell)"
+  [cli_tools]="cli tools (ripgrep jq fd shellcheck certutil, wslu on wsl)"
   [git_config]="git global config"
+  [global_gitignore]="global gitignore (env files, bytecode)"
   [terraform]="terraform"
   [docker]="docker"
+  [docker_running]="docker daemon running and usable without sudo"
   [postgresql]="postgresql"
   [claude]="claude code cli"
   [statusline]="claude status line"
@@ -85,9 +102,18 @@ declare -A LABEL=(
   [basecamp_auth]="basecamp mcp authenticated"
   [gh]="github cli"
   [gh_auth]="github cli authenticated"
+  [ssh_key]="github ssh key (git over ssh)"
+  [git_signing]="git commits signed with ssh key"
   [aws]="aws cli"
   [aws_auth]="aws cli authenticated"
+  [ssm_plugin]="aws session manager plugin"
   [herdr]="herdr"
+  [rex_hosts]="hosts entries (${REX_HOSTS[*]})"
+  [pre_commit]="pre-commit"
+  [aws_profile]="aws profile analyst-user-role (risq ec2 ssh-config)"
+  [ssl_certs]="rex.local ssl certs generated and trusted"
+  [pre_commit_hooks]="pre-commit hooks installed in repos"
+  [terraform_aws]="terraform-aws cloned and initialised ($TF_DIR)"
   [risq]="risq cloned, up to date and installed ($RISQ_DIR)"
   [risq_dev_setup]="risq dev setup (repos synced into $CODE_HOME)"
 )
@@ -115,11 +141,10 @@ EOF
 
   sed -i 's/^ZSH_THEME=.*/ZSH_THEME="agnoster"/' ~/.zshrc
   grep -q '^DEFAULT_USER=' ~/.zshrc || echo 'DEFAULT_USER="$(whoami)"' >> ~/.zshrc
-  grep -q '^export GIT_AUTHOR_NAME=' ~/.zshrc || echo "export GIT_AUTHOR_NAME='Sam Archie'" >> ~/.zshrc
 }
 
 # nvm plugin loads ~/.nvm in zsh; nvm's installer only edits whichever profile existed when it ran
-ZSH_PLUGINS_LINE="plugins=(git aws docker docker-compose nvm zsh-autosuggestions zsh-syntax-highlighting zsh-history-substring-search you-should-use)"
+ZSH_PLUGINS_LINE="plugins=(git aws docker docker-compose nvm terraform zsh-autosuggestions zsh-syntax-highlighting zsh-history-substring-search you-should-use)"
 check_zsh_plugins() {
   local p
   for p in "${!ZSH_PLUGINS[@]}"; do [ -d "$ZSH_CUSTOM/plugins/$p" ] || return 1; done
@@ -133,6 +158,21 @@ install_zsh_plugins() {
   sed -i "s/^plugins=.*/$ZSH_PLUGINS_LINE/" ~/.zshrc
 }
 
+# workspace switchers from the terraform-aws README
+ZSH_ALIASES=(
+  'alias tfdev="terraform workspace select development"'
+  'alias tftest="terraform workspace select test"'
+  'alias tfprod="terraform workspace select production"'
+)
+check_zsh_aliases() {
+  local line
+  for line in "${ZSH_ALIASES[@]}"; do grep -qxF -- "$line" ~/.zshrc || return 1; done
+}
+install_zsh_aliases() {
+  local line
+  for line in "${ZSH_ALIASES[@]}"; do grep -qxF -- "$line" ~/.zshrc || echo "$line" >> ~/.zshrc; done
+}
+
 check_uv()      { has uv; }
 install_uv()    { curl -fsSL https://astral.sh/uv/install.sh | sh; }
 
@@ -143,8 +183,13 @@ check_git_config() {
   [ "$(git config --global --get pull.rebase)" = false ]
 }
 install_git_config() {
-  git config --global --get user.name >/dev/null || git config --global user.name "Sam Archie"
-  git config --global --get user.email >/dev/null || git config --global user.email "sam.archie@urbanintelligence.co.nz"
+  local key value
+  for key in user.name user.email; do
+    git config --global --get "$key" >/dev/null && continue
+    read -r -p "git $key: " value
+    [ -n "$value" ] || { log "git $key is required"; return 1; }
+    git config --global "$key" "$value"
+  done
   git config --global init.defaultBranch main
   git config --global pull.rebase false
 }
@@ -162,6 +207,59 @@ install_docker() {
   curl -fsSL https://get.docker.com | sh
   sudo usermod -aG docker "$(whoami)"
   log "docker installed, log out/in for group membership to take effect"
+}
+
+check_docker_running() { docker info >/dev/null 2>&1; }
+install_docker_running() {
+  if is_wsl && ! grep -qx 'systemd=true' /etc/wsl.conf 2>/dev/null; then
+    if grep -qx '\[boot\]' /etc/wsl.conf 2>/dev/null; then
+      sudo sed -i '/^\[boot\]$/a systemd=true' /etc/wsl.conf
+    else
+      printf '\n[boot]\nsystemd=true\n' | sudo tee -a /etc/wsl.conf >/dev/null
+    fi
+    log "enabled systemd in /etc/wsl.conf: run 'wsl.exe --shutdown' from Windows, reopen, rerun bootstrap"
+  fi
+  [[ " $(id -nG) " == *" docker "* ]] || sudo usermod -aG docker "$(whoami)"
+  sudo systemctl enable --now docker 2>/dev/null || sudo service docker start
+  docker info >/dev/null 2>&1 || log "docker group not active in this shell yet: log out/in (or restart WSL) and rerun"
+}
+
+# other binfmt registrations (e.g. a qemu/binfmt container) can wipe WSL's handler, leaving
+# "exec format error" for every .exe; systemd-binfmt re-registers it from /usr/lib/binfmt.d
+check_wsl_interop() { ! is_wsl || /mnt/c/Windows/System32/cmd.exe /c exit 0 >/dev/null 2>&1; }
+install_wsl_interop() {
+  sudo systemctl restart systemd-binfmt 2>/dev/null ||
+    echo ':WSLInterop:M::MZ::/init:PF' | sudo tee /proc/sys/fs/binfmt_misc/register >/dev/null
+  check_wsl_interop
+}
+
+check_cli_tools() {
+  local tool
+  for tool in rg jq fd shellcheck certutil; do has "$tool" || return 1; done
+  ! is_wsl || has wslview
+}
+install_cli_tools() {
+  sudo apt-get update -y
+  sudo apt-get install -y ripgrep jq fd-find shellcheck libnss3-tools
+  # wslview lets gh, aws sso and others open the Windows browser
+  ! is_wsl || sudo apt-get install -y wslu
+  # ubuntu names the binary fdfind
+  has fd || { mkdir -p "$HOME/.local/bin"; ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"; }
+}
+
+global_gitignore_path() {
+  local path
+  path=$(git config --global --get core.excludesFile || echo "${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore")
+  echo "${path/#\~/$HOME}"
+}
+check_global_gitignore() {
+  local line file; file=$(global_gitignore_path)
+  for line in "${GLOBAL_GITIGNORE[@]}"; do grep -qxF -- "$line" "$file" 2>/dev/null || return 1; done
+}
+install_global_gitignore() {
+  local line file; file=$(global_gitignore_path)
+  mkdir -p "$(dirname "$file")"; touch "$file"
+  for line in "${GLOBAL_GITIGNORE[@]}"; do grep -qxF -- "$line" "$file" || echo "$line" >> "$file"; done
 }
 
 check_postgresql()   { has psql; }
@@ -219,7 +317,7 @@ install_claude_guardrails() {
 check_basecamp_mcp()   { has claude && claude mcp get basecamp >/dev/null 2>&1; }
 install_basecamp_mcp() { claude mcp add --scope user --transport http basecamp https://mcp.basecamp.com/mcp; }
 
-check_basecamp_auth()   { has claude && claude mcp get basecamp 2>&1 | grep -q "Connected"; }
+check_basecamp_auth()   { has claude && [[ $(claude mcp get basecamp 2>&1) == *Connected* ]]; }
 install_basecamp_auth() { claude mcp login basecamp; }
 
 check_gh()      { has gh; }
@@ -239,6 +337,34 @@ install_gh() {
 check_gh_auth()   { has gh && gh auth status >/dev/null 2>&1; }
 install_gh_auth() { gh auth login; }
 
+ssh_key_body() { awk '{print $2}' "$SSH_KEY.pub"; }
+gh_scope() { [[ $(gh auth status 2>&1) == *"'$1'"* ]] || gh auth refresh -h github.com -s "$1"; }
+check_ssh_key() {
+  [ -f "$SSH_KEY" ] && [ "$(gh config get git_protocol 2>/dev/null)" = ssh ] &&
+  # github always exits 1 here, so match the output instead of piping (pipefail would fail the pipe)
+  [[ $(ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new git@github.com 2>&1) == *"successfully authenticated"* ]]
+}
+install_ssh_key() {
+  [ -f "$SSH_KEY" ] || ssh-keygen -t ed25519 -C "$(git config --global user.email)" -f "$SSH_KEY"
+  gh_scope admin:public_key
+  gh api user/keys --jq '.[].key' | grep -F "$(ssh_key_body)" >/dev/null || gh ssh-key add "$SSH_KEY.pub" --title "$(hostname)"
+  gh config set git_protocol ssh
+}
+
+check_git_signing() {
+  [ "$(git config --global --get gpg.format)" = ssh ] &&
+  [ "$(git config --global --get commit.gpgsign)" = true ] &&
+  [ "$(git config --global --get user.signingkey)" = "$SSH_KEY.pub" ]
+}
+install_git_signing() {
+  gh_scope admin:ssh_signing_key
+  gh api user/ssh_signing_keys --jq '.[].key' | grep -F "$(ssh_key_body)" >/dev/null ||
+    gh ssh-key add "$SSH_KEY.pub" --type signing --title "$(hostname) signing"
+  git config --global gpg.format ssh
+  git config --global user.signingkey "$SSH_KEY.pub"
+  git config --global commit.gpgsign true
+}
+
 check_aws()     { has aws; }
 install_aws()   { curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash; }
 
@@ -247,6 +373,45 @@ install_aws_auth() { aws configure; }
 
 check_herdr()   { has herdr; }
 install_herdr() { curl -fsSL https://herdr.dev/install.sh | sh; }
+
+check_ssm_plugin() { has session-manager-plugin; }
+install_ssm_plugin() {
+  local arch deb
+  case "$(dpkg --print-architecture)" in arm64) arch=ubuntu_arm64 ;; *) arch=ubuntu_64bit ;; esac
+  deb=$(mktemp --suffix .deb)
+  curl -fsSL -o "$deb" "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/$arch/session-manager-plugin.deb"
+  sudo dpkg -i "$deb"
+  rm -f "$deb"
+}
+
+# prints the REX_HOSTS names that $1 doesn't map; handles CRLF (Windows hosts file)
+missing_hosts() {
+  local host
+  for host in "${REX_HOSTS[@]}"; do
+    awk -v h="$host" '{ sub(/\r$/, "") } $1 !~ /^#/ { for (i = 2; i <= NF; i++) if ($i == h) f = 1 } END { exit !f }' "$1" 2>/dev/null ||
+      printf '%s ' "$host"
+  done
+}
+# WSL regenerates /etc/hosts from Windows and Windows browsers only read the Windows file, so set both
+check_rex_hosts() {
+  [ -z "$(missing_hosts /etc/hosts)" ] || return 1
+  ! is_wsl || [ -z "$(missing_hosts "$WIN_HOSTS")" ]
+}
+install_rex_hosts() {
+  local missing
+  missing=$(missing_hosts /etc/hosts)
+  [ -z "$missing" ] || printf '\n127.0.0.1 %s\n' "$missing" | sudo tee -a /etc/hosts >/dev/null
+  if is_wsl; then
+    missing=$(missing_hosts "$WIN_HOSTS")
+    if [ -n "$missing" ]; then
+      log "approve the Windows admin prompt to update the Windows hosts file"
+      powershell.exe -NoProfile -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile -Command Add-Content -Path \$env:SystemRoot\\System32\\drivers\\etc\\hosts -Value ''127.0.0.1 ${missing% }'''"
+    fi
+  fi
+}
+
+check_pre_commit()   { has pre-commit; }
+install_pre_commit() { uv tool install pre-commit; }
 
 check_risq() {
   [ -d "$RISQ_DIR/.git" ] && has risq &&
@@ -270,6 +435,78 @@ check_risq_dev_setup() {
 }
 install_risq_dev_setup() { (cd "$RISQ_DIR" && risq dev setup); }
 
+check_aws_profile()   { aws configure get role_arn --profile analyst-user-role >/dev/null 2>&1; }
+install_aws_profile() { risq ec2 ssh-config; }
+
+# nginx serves cms/catalogue with the rex.local cert, so it carries a *.rex.local SAN
+declare -A SSL_CERTS=(
+  [rex.local]="--san www.rex.local --san *.rex.local --san 127.0.0.1 --san ::1"
+  [api.rex.local]="--san 127.0.0.1 --san ::1"
+)
+cert_thumbprint() { openssl x509 -noout -fingerprint -sha1 -in "$1" | cut -d= -f2 | tr -d ':'; }
+cert_trusted() {
+  if is_wsl; then
+    [ "$(powershell.exe -NoProfile -Command "Test-Path Cert:\\CurrentUser\\Root\\$(cert_thumbprint "$1")" | tr -d '\r')" = True ]
+  else
+    certutil -d "sql:$HOME/.pki/nssdb" -L -n "risq-dev-$(basename "$1" .crt)" >/dev/null 2>&1
+  fi
+}
+check_ssl_certs() {
+  local domain crt
+  for domain in "${!SSL_CERTS[@]}"; do
+    crt="$RISQ_DIR/ssl/$domain.crt"
+    [ -f "$crt" ] && openssl x509 -checkend 86400 -noout -in "$crt" >/dev/null && cert_trusted "$crt" || return 1
+  done
+}
+install_ssl_certs() {
+  local domain crt win_tmp
+  for domain in "${!SSL_CERTS[@]}"; do
+    crt="$RISQ_DIR/ssl/$domain.crt"
+    if [ ! -f "$crt" ] || ! openssl x509 -checkend 86400 -noout -in "$crt" >/dev/null; then
+      # SAN flags are word-split on purpose; set -f stops *.rex.local globbing
+      # shellcheck disable=SC2086
+      (set -f; cd "$RISQ_DIR" && risq dev generate-ssl-cert --domain "$domain" ${SSL_CERTS[$domain]})
+    fi
+    cert_trusted "$crt" && continue
+    if is_wsl; then
+      # Import-Certificate can't read \\wsl.localhost paths reliably, so copy to Windows temp first
+      win_tmp=$(wslpath "$(powershell.exe -NoProfile -Command '$env:TEMP' | tr -d '\r')")
+      cp "$crt" "$win_tmp/$domain.crt"
+      log "approve the Windows prompt to trust $domain"
+      powershell.exe -NoProfile -Command "Import-Certificate -FilePath \"\$env:TEMP\\$domain.crt\" -CertStoreLocation Cert:\\CurrentUser\\Root" >/dev/null
+    else
+      (cd "$RISQ_DIR" && risq dev import-ssl-cert "ssl/$domain.crt")
+    fi
+  done
+}
+
+pre_commit_repos() {
+  local dir
+  for dir in "$CODE_HOME"/*/; do
+    [ -f "$dir.pre-commit-config.yaml" ] && [ -d "$dir.git" ] && echo "${dir%/}"
+  done
+}
+check_pre_commit_hooks() {
+  local repo
+  for repo in $(pre_commit_repos); do grep -qs pre-commit "$repo/.git/hooks/pre-commit" || return 1; done
+}
+install_pre_commit_hooks() {
+  local repo
+  for repo in $(pre_commit_repos); do
+    grep -qs pre-commit "$repo/.git/hooks/pre-commit" || (cd "$repo" && pre-commit install)
+  done
+}
+
+# init reads the S3 backend, so it needs the aws cli logged in
+check_terraform_aws() { [ -d "$TF_DIR/.terraform/providers" ]; }
+install_terraform_aws() {
+  [ -d "$CODE_HOME/terraform-aws/.git" ] || git clone git@github.com:uintel/terraform-aws.git "$CODE_HOME/terraform-aws"
+  terraform -chdir="$TF_DIR" init
+}
+
+# menu and status list are alphabetical by label; installs still follow ITEMS (dependency) order
+mapfile -t DISPLAY < <(for id in "${ITEMS[@]}"; do printf '%s\t%s\n' "${LABEL[$id]}" "$id"; done | sort -f | cut -f2)
+
 declare -A STATUS
 run_checks() {
   local id
@@ -281,29 +518,30 @@ run_checks() {
 print_status() {
   local id
   echo
-  for id in "${ITEMS[@]}"; do
+  for id in "${DISPLAY[@]}"; do
     if [ "${STATUS[$id]}" = ok ]; then echo "  $OK ${LABEL[$id]}"; else echo "  $NO ${LABEL[$id]}"; fi
   done
   echo
 }
 
-declare -A PICKED FAILED
+declare -A PICKED=() FAILED=()
 draw_menu() {
   local i id box label suffix width end
-  local help="↑/↓ move · enter select/unselect · a select/unselect all · i install selected · q quit"
+  local help="↑↓ move · enter toggle · a all · i install · q quit"
   local rows cols visible
-  rows=$(tput lines); cols=$(tput cols)
+  # tput inside $(...) can't see the terminal and falls back to 24x80, so ask the tty directly
+  read -r rows cols < <(stty size </dev/tty 2>/dev/null || echo "24 80")
   # 3 fixed lines (help, "more above", "more below") and one spare so the terminal never scrolls
   visible=$((rows - 4)); [ "$visible" -lt 3 ] && visible=3
   [ "$CURSOR" -lt "$TOP" ] && TOP=$CURSOR
   [ "$CURSOR" -ge $((TOP + visible)) ] && TOP=$((CURSOR - visible + 1))
-  end=$((TOP + visible)); [ "$end" -gt ${#ITEMS[@]} ] && end=${#ITEMS[@]}
+  end=$((TOP + visible)); [ "$end" -gt ${#DISPLAY[@]} ] && end=${#DISPLAY[@]}
 
   printf '\e[H\e[J'
   echo "${help:0:cols}"
   if [ "$TOP" -gt 0 ]; then echo "  ↑ $TOP more"; else echo; fi
   for ((i = TOP; i < end; i++)); do
-    id=${ITEMS[$i]}
+    id=${DISPLAY[$i]}
     if [ "${STATUS[$id]}" = ok ]; then box=" $OK "
     elif [ -n "${PICKED[$id]:-}" ]; then box="[x]"
     else box="[ ]"; fi
@@ -313,7 +551,7 @@ draw_menu() {
     label=${LABEL[$id]:0:width}
     if [ "$i" -eq "$CURSOR" ]; then echo "${REV}> $box $label${RST}$suffix"; else echo "  $box $label$suffix"; fi
   done
-  [ "$end" -lt ${#ITEMS[@]} ] && printf '  ↓ %d more' $((${#ITEMS[@]} - end))
+  [ "$end" -lt ${#DISPLAY[@]} ] && printf '  ↓ %d more' $((${#DISPLAY[@]} - end))
 }
 
 # returns 0 when the user asks to install the picked items, 1 on quit
@@ -325,9 +563,9 @@ menu() {
     if [ "$key" = $'\e' ]; then IFS= read -rsn2 -t 0.1 rest; key+=$rest; fi
     case "$key" in
       $'\e[A') [ "$CURSOR" -gt 0 ] && CURSOR=$((CURSOR - 1)) ;;
-      $'\e[B') [ "$CURSOR" -lt $((${#ITEMS[@]} - 1)) ] && CURSOR=$((CURSOR + 1)) ;;
+      $'\e[B') [ "$CURSOR" -lt $((${#DISPLAY[@]} - 1)) ] && CURSOR=$((CURSOR + 1)) ;;
       "")  # enter
-        id=${ITEMS[$CURSOR]}
+        id=${DISPLAY[$CURSOR]}
         if [ "${STATUS[$id]}" != ok ]; then
           if [ -n "${PICKED[$id]:-}" ]; then unset "PICKED[$id]"; else PICKED[$id]=1; fi
         fi ;;
@@ -354,6 +592,12 @@ main() {
     git clone -q --depth 1 "$DOTFILES_REPO" "$DOTFILES_DIR" || die "could not clone $DOTFILES_REPO"
   fi
 
+  if [ "$CHECK_ONLY" = 0 ]; then
+    log "updating uv tools and claude"
+    has uv && uv tool upgrade --all
+    has claude && claude update
+  fi
+
   log "checking machine setup"
   run_checks
   print_status
@@ -366,10 +610,9 @@ main() {
   if [ ! -t 0 ] || [ ! -t 1 ]; then log "not a terminal, can't show the menu; rerun interactively"; exit 1; fi
 
   CURSOR=0; TOP=0
-  tput civis
+  menu_screen_on
   while menu; do
-    tput cnorm
-    printf '\e[H\e[2J'
+    menu_screen_off
     # walk ITEMS, not PICKED, so dependencies install in order
     for id in "${ITEMS[@]}"; do
       [ -n "${PICKED[$id]:-}" ] || continue
@@ -382,11 +625,10 @@ main() {
     log "re-checking machine setup"
     run_checks
     read -rsp "Press enter to return to the menu" _
-    tput civis
+    menu_screen_on
   done
 
-  tput cnorm
-  printf '\e[H\e[2J'
+  menu_screen_off
   print_status
   log "bootstrap complete. Log: $LOG_FILE"
   [ ${#MISSING[@]} -eq 0 ]
