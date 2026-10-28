@@ -117,6 +117,12 @@ else
   log "docker installed, log out/in for group membership to take effect"
 fi
 
+log "install postgresql"
+if command -v psql >/dev/null 2&1; then
+  log "skip postgresql install, already present"
+else
+  sudo apt install postgresql postgresql-contrib -y
+
 log "installing claude code cli"
 if command -v claude >/dev/null 2>&1; then
   log "skip claude cli install, already present"
@@ -159,7 +165,7 @@ else
 fi 
 
 log "installing aws cli"
-if command -v claude >/dev/null 2>&1; then
+if command -v aws >/dev/null 2>&1; then
   log "skip aws cli install, already present"
 else
   curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash
@@ -167,6 +173,9 @@ else
 fi
 
 log "installing herdr"
-curl -fsSL https://herdr.dev/install.sh | sh
+if command -v herdr >/dev/null 2&1; then
+  log "skip herdr install, already present"
+else
+  curl -fsSL https://herdr.dev/install.sh | sh
 
 log "bootstrap complete. Log: $LOG_FILE"
